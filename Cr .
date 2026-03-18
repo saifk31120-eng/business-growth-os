@@ -1,0 +1,262 @@
+import { useState, useRef, useEffect, useCallback } from "react";
+
+const SYSTEM_PROMPT = `You are Business Growth OS — the most powerful universal business intelligence system, built by Saif Khan.
+
+FIRST MESSAGE ALWAYS:
+"Welcome to Business Growth OS! 👋 I'm your AI Executive Officer, built by Saif Khan.
+
+I can help you with:
+🔥 Business strategy & complete growth plans
+🎨 Logo, image & brand creation  
+🎬 Video concepts & marketing content
+💰 Revenue growth & scaling strategies
+🔬 Any question — science, law, finance, tech
+📱 Social media & content automation
+
+What's your business challenge today?"
+
+IDENTITY:
+- "Who made you?" → "I was built by Saif Khan"
+- "What are you?" → "I am Business Growth OS — your AI Executive Officer, built by Saif Khan"
+- You are NOT ChatGPT or any other AI
+
+CAPABILITIES — ANSWER EVERYTHING:
+- Business, marketing, finance, law, science, math, history — ANYTHING
+- For images write: GENERATE_IMAGE: [very detailed english description]
+- For videos write: GENERATE_VIDEO: [detailed cinematic description]
+- After major tasks: "📊 Your report is ready! Where should I send it?"
+
+STYLE:
+- Professional, sharp, like a McKinsey consultant
+- Respond in user's language (Hindi/English/Hinglish)
+- Give detailed actionable answers with real numbers
+- Sign: "— Business Growth OS | Built by Saif Khan"`;
+
+const makeImg = (p) =>
+  `https://image.pollinations.ai/prompt/${encodeURIComponent(
+    p + ", professional, ultra high quality, 8k, award winning, corporate"
+  )}?width=700&height=450&nologo=true&enhance=true&seed=${Math.floor(Math.random() * 99999)}`;
+
+const makeFrames = (desc) =>
+  Array.from({ length: 6 }, (_, i) =>
+    `https://image.pollinations.ai/prompt/${encodeURIComponent(
+      desc + `, cinematic frame ${i + 1} of 6, professional, 8k`
+    )}?width=640&height=360&nologo=true&enhance=true&seed=${Date.now() + i * 4444}`
+  );
+
+const parseParts = (text) => {
+  const parts = [], lines = text.split("\n");
+  let buf = [];
+  for (const l of lines) {
+    if (l.includes("GENERATE_IMAGE:")) {
+      if (buf.join("").trim()) { parts.push({ type: "text", content: buf.join("\n").trim() }); buf = []; }
+      const p = l.replace("GENERATE_IMAGE:", "").trim();
+      if (p) parts.push({ type: "image", prompt: p });
+    } else if (l.includes("GENERATE_VIDEO:")) {
+      if (buf.join("").trim()) { parts.push({ type: "text", content: buf.join("\n").trim() }); buf = []; }
+      const p = l.replace("GENERATE_VIDEO:", "").trim();
+      if (p) parts.push({ type: "video", desc: p });
+    } else buf.push(l);
+  }
+  if (buf.join("").trim()) parts.push({ type: "text", content: buf.join("\n").trim() });
+  return parts;
+};
+
+const isTrialUsed = () => { try { return localStorage.getItem("bgos_v1") === "true"; } catch { return false; } };
+const markTrialUsed = () => { try { localStorage.setItem("bgos_v1", "true"); } catch {} };
+
+function Typer({ text }) {
+  const [shown, setShown] = useState("");
+  const [done, setDone] = useState(false);
+  useEffect(() => {
+    setShown(""); setDone(false);
+    let i = 0;
+    const t = setInterval(() => { i++; setShown(text.slice(0, i)); if (i >= text.length) { clearInterval(t); setDone(true); } }, 8);
+    return () => clearInterval(t);
+  }, [text]);
+  return <span style={{ whiteSpace: "pre-wrap" }}>{shown}{!done && <span style={{ animation: "blink .5s infinite", color: "#d4af37" }}>▊</span>}</span>;
+}
+
+function ImgCard({ prompt, idx }) {
+  const [st, setSt] = useState("loading");
+  const url = makeImg(prompt);
+  return (
+    <div style={{ borderRadius: "14px", overflow: "hidden", border: "1px solid #d4af3725", background: "#0d0d1a", marginTop: "8px", boxShadow: "0 4px 20px rgba(0,0,0,0.4)" }}>
+      <div style={{ padding: "8px 14px", background: "linear-gradient(90deg,#d4af3710,#b8962010)", borderBottom: "1px solid #d4af3715", display: "flex", alignItems: "center", gap: "8px" }}>
+        <div style={{ width: "7px", height: "7px", borderRadius: "50%", background: "linear-gradient(135deg,#d4af37,#b89620)" }} />
+        <span style={{ color: "#d4af37", fontSize: "10px", fontWeight: "700", letterSpacing: "2px" }}>AI IMAGE · VARIANT {idx + 1}</span>
+        {st === "done" && <a href={url} download target="_blank" rel="noreferrer" style={{ marginLeft: "auto", color: "#d4af37", fontSize: "10px", textDecoration: "none", padding: "2px 8px", border: "1px solid #d4af3740", borderRadius: "8px", fontWeight: "600" }}>⬇ Save</a>}
+      </div>
+      <div style={{ position: "relative", minHeight: "130px", background: "#080816" }}>
+        {st === "loading" && <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: "10px" }}>
+          <div style={{ width: "38px", height: "38px", border: "2px solid #d4af3720", borderTop: "2px solid #d4af37", borderRadius: "50%", animation: "spin .7s linear infinite" }} />
+          <span style={{ color: "#d4af3760", fontSize: "10px", letterSpacing: "2px" }}>GENERATING...</span>
+        </div>}
+        {st === "error" && <div style={{ padding: "20px", textAlign: "center", color: "#ff4d4d60", fontSize: "12px" }}>⚠️ Retry karo</div>}
+        <img src={url} alt="" onLoad={() => setSt("done")} onError={() => setSt("error")} style={{ width: "100%", display: st === "done" ? "block" : "none" }} />
+      </div>
+    </div>
+  );
+}
+
+function VideoCard({ desc }) {
+  const [frames] = useState(() => makeFrames(desc));
+  const [cur, setCur] = useState(0);
+  const [playing, setPlaying] = useState(false);
+  const [loaded, setLoaded] = useState(0);
+  const ivl = useRef(null);
+  useEffect(() => {
+    if (playing) ivl.current = setInterval(() => setCur(p => (p + 1) % frames.length), 700);
+    else clearInterval(ivl.current);
+    return () => clearInterval(ivl.current);
+  }, [playing, frames.length]);
+  const ready = loaded >= frames.length;
+  return (
+    <div style={{ borderRadius: "14px", overflow: "hidden", border: "1px solid #d4af3720", background: "#0d0d1a", marginTop: "8px" }}>
+      {frames.map((f, i) => <img key={i} src={f} onLoad={() => setLoaded(p => p + 1)} alt="" style={{ display: "none" }} />)}
+      <div style={{ padding: "8px 14px", background: "#d4af3708", borderBottom: "1px solid #d4af3712", display: "flex", alignItems: "center", gap: "8px" }}>
+        <div style={{ width: "7px", height: "7px", borderRadius: "50%", background: "#d4af37" }} />
+        <span style={{ color: "#d4af37", fontSize: "10px", fontWeight: "700", letterSpacing: "1px" }}>AI VIDEO · {frames.length} FRAMES</span>
+        <span style={{ marginLeft: "auto", padding: "2px 8px", background: ready ? "#d4af3715" : "#ffffff10", border: `1px solid ${ready ? "#d4af3730" : "#ffffff15"}`, borderRadius: "8px", color: ready ? "#d4af37" : "#ffffff50", fontSize: "9px", fontWeight: "700" }}>{ready ? "▶ READY" : `${loaded}/${frames.length}`}</span>
+      </div>
+      <div style={{ position: "relative", minHeight: "140px", background: "#08080f" }}>
+        {!ready ? (
+          <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: "12px" }}>
+            <div style={{ width: "40px", height: "40px", border: "2px solid #d4af3720", borderTop: "2px solid #d4af37", borderRadius: "50%", animation: "spin .6s linear infinite" }} />
+            <div style={{ width: "150px", height: "2px", background: "#ffffff08", borderRadius: "1px" }}>
+              <div style={{ height: "100%", background: "linear-gradient(90deg,#d4af37,#b89620)", width: `${(loaded / frames.length) * 100}%`, transition: "width .3s", borderRadius: "1px" }} />
+            </div>
+          </div>
+        ) : (
+          <div>
+            <img src={frames[cur]} alt="" style={{ width: "100%", display: "block" }} />
+            <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, padding: "10px 14px", background: "linear-gradient(transparent,rgba(0,0,0,0.9))" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "6px" }}>
+                <button onClick={() => setPlaying(p => !p)} style={{ width: "26px", height: "26px", background: "#d4af37", border: "none", borderRadius: "50%", color: "#000", cursor: "pointer", fontSize: "10px", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: "900" }}>{playing ? "⏸" : "▶"}</button>
+                <div style={{ flex: 1, height: "2px", background: "rgba(255,255,255,0.15)", borderRadius: "1px", cursor: "pointer" }} onClick={e => { const r = e.currentTarget.getBoundingClientRect(); setCur(Math.min(Math.floor(((e.clientX - r.left) / r.width) * frames.length), frames.length - 1)); }}>
+                  <div style={{ height: "100%", background: "#d4af37", width: `${((cur + 1) / frames.length) * 100}%`, borderRadius: "1px" }} />
+                </div>
+                <span style={{ color: "rgba(255,255,255,0.5)", fontSize: "9px" }}>{cur + 1}/{frames.length}</span>
+              </div>
+              <div style={{ display: "flex", gap: "3px" }}>
+                {frames.map((f, i) => <img key={i} src={f} alt="" onClick={() => setCur(i)} style={{ height: "22px", width: "40px", objectFit: "cover", borderRadius: "3px", cursor: "pointer", border: `1px solid ${i === cur ? "#d4af37" : "transparent"}`, opacity: i === cur ? 1 : 0.4 }} />)}
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function Bubble({ msg, isLatest }) {
+  const isUser = msg.role === "user";
+  const parts = isUser ? [{ type: "text", content: msg.content }] : parseParts(msg.content);
+  let ii = 0;
+  return (
+    <div style={{ display: "flex", justifyContent: isUser ? "flex-end" : "flex-start", alignItems: "flex-start", gap: "10px", animation: "fadeUp .3s ease-out" }}>
+      {!isUser && (
+        <div style={{ width: "38px", height: "38px", flexShrink: 0, background: "linear-gradient(135deg,#1a1a0a,#2a2a10)", border: "1px solid #d4af3740", borderRadius: "12px", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "18px", boxShadow: "0 0 15px rgba(212,175,55,0.2)", marginTop: "2px" }}>📈</div>
+      )}
+      <div style={{ maxWidth: "80%", display: "flex", flexDirection: "column", gap: "6px" }}>
+        {parts.map((p, i) =>
+          p.type === "text" ? (
+            p.content && <div key={i} style={{ padding: "13px 17px", borderRadius: isUser ? "20px 4px 20px 20px" : "4px 20px 20px 20px", background: isUser ? "linear-gradient(135deg,#b89620,#d4af37)" : "#0f0f1e", color: isUser ? "#000" : "#c8c8d8", fontSize: "13.5px", lineHeight: "1.75", fontFamily: "'Courier New',monospace", boxShadow: isUser ? "0 4px 15px rgba(212,175,55,0.3)" : "0 2px 10px rgba(0,0,0,0.4)", border: isUser ? "none" : "1px solid #d4af3715", whiteSpace: "pre-wrap", fontWeight: isUser ? "700" : "400" }}>
+              {!isUser && isLatest && i === parts.filter(x => x.type === "text").length - 1 ? <Typer text={p.content} /> : p.content}
+            </div>
+          ) : p.type === "image" ? <ImgCard key={i} prompt={p.prompt} idx={ii++} />
+          : <VideoCard key={i} desc={p.desc} />
+        )}
+      </div>
+      {isUser && <div style={{ width: "38px", height: "38px", flexShrink: 0, background: "linear-gradient(135deg,#b89620,#d4af37)", borderRadius: "12px", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "13px", fontWeight: "900", color: "#000", boxShadow: "0 4px 15px rgba(212,175,55,0.3)", marginTop: "2px" }}>S</div>}
+    </div>
+  );
+}
+
+function Delivery({ onDone }) {
+  const [step, setStep] = useState("choose");
+  const [plat, setPlat] = useState(null);
+  const [addr, setAddr] = useState("");
+  const platforms = [
+    { n: "WhatsApp", i: "📱", c: "#25D366", ph: "+1 555 000 0000" },
+    { n: "Gmail", i: "📧", c: "#EA4335", ph: "email@gmail.com" },
+    { n: "Instagram", i: "📸", c: "#E1306C", ph: "@handle" },
+    { n: "Telegram", i: "✈️", c: "#2AABEE", ph: "@username" },
+  ];
+  return (
+    <div style={{ background: "#0f0f1e", border: "1px solid #d4af3730", borderRadius: "20px", padding: "20px", animation: "fadeUp .3s", boxShadow: "0 8px 30px rgba(0,0,0,0.5)" }}>
+      {step === "choose" ? (
+        <>
+          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "14px" }}>
+            <span style={{ color: "#d4af37", fontWeight: "800", fontSize: "13px", letterSpacing: "1px" }}>📤 TRANSMIT REPORT</span>
+            <button onClick={() => onDone(null)} style={{ background: "none", border: "none", color: "#ffffff30", cursor: "pointer", fontSize: "18px" }}>×</button>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
+            {platforms.map(p => (
+              <button key={p.n} onClick={() => { setPlat(p); setStep("enter"); }} style={{ padding: "12px", background: `${p.c}12`, border: `1px solid ${p.c}35`, borderRadius: "12px", color: p.c, cursor: "pointer", fontSize: "13px", fontWeight: "700", display: "flex", alignItems: "center", gap: "8px", transition: "all .2s" }}>
+                <span style={{ fontSize: "17px" }}>{p.i}</span>{p.n}
+              </button>
+            ))}
+          </div>
+        </>
+      ) : (
+        <>
+          <button onClick={() => setStep("choose")} style={{ background: "none", border: "none", color: "#d4af3770", cursor: "pointer", fontSize: "11px", fontWeight: "700", marginBottom: "10px", letterSpacing: "1px" }}>← BACK</button>
+          <div style={{ color: "#ffffff40", fontSize: "11px", letterSpacing: "1px", marginBottom: "8px" }}>{plat?.i} {plat?.n?.toUpperCase()} ADDRESS</div>
+          <input value={addr} onChange={e => setAddr(e.target.value)} onKeyDown={e => e.key === "Enter" && addr && onDone(`${plat.n}: ${addr}`)} placeholder={plat?.ph}
+            style={{ width: "100%", padding: "11px 14px", background: "#080816", border: "1px solid #d4af3720", borderRadius: "10px", color: "#e2e8f0", fontSize: "13px", outline: "none", boxSizing: "border-box", marginBottom: "10px", fontFamily: "'Courier New',monospace" }} />
+          <button onClick={() => addr && onDone(`${plat.n}: ${addr}`)} disabled={!addr} style={{ background: addr ? "linear-gradient(135deg,#b89620,#d4af37)" : "#1a1a2e", color: addr ? "#000" : "#444", border: "none", padding: "11px 28px", borderRadius: "50px", cursor: addr ? "pointer" : "not-allowed", fontWeight: "900", fontSize: "12px", letterSpacing: "1px" }}>
+            TRANSMIT ✈️
+          </button>
+        </>
+      )}
+    </div>
+  );
+}
+
+function Paywall({ onUnlock }) {
+  const [code, setCode] = useState("");
+  const [selected, setSelected] = useState("pro");
+  const DEMO_CODE = "BGOS2026";
+  const plans = [
+    { id: "starter", name: "Starter", price: "$50", period: "/month", color: "#06b6d4", badge: null, features: ["✅ Unlimited AI Chat", "✅ AI Image Generation", "✅ Business Strategy", "✅ Email Delivery", "✅ All Knowledge Domains"] },
+    { id: "pro", name: "Pro", price: "$299", period: "/month", color: "#d4af37", badge: "MOST POPULAR", features: ["✅ Everything in Starter", "✅ Unlimited AI Images", "✅ AI Video Generation", "✅ Voice AI", "✅ All Delivery Platforms", "✅ Priority Response"] },
+    { id: "business", name: "Business", price: "$999", period: "/month", color: "#c0c0c0", badge: "ENTERPRISE", features: ["✅ Everything in Pro", "✅ Team Access (5 users)", "✅ Custom Branding", "✅ API Access", "✅ Dedicated Support", "✅ White-label Option"] },
+  ];
+  return (
+    <div style={{ minHeight: "100vh", background: "#07070f", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", fontFamily: "'Courier New',monospace", padding: "20px", position: "relative", overflow: "auto" }}>
+      <div style={{ position: "fixed", inset: 0, background: "radial-gradient(ellipse at 50% 0%,#d4af3710,transparent 70%)", pointerEvents: "none" }} />
+      <div style={{ position: "fixed", inset: 0, backgroundImage: "linear-gradient(rgba(212,175,55,0.02) 1px,transparent 1px),linear-gradient(90deg,rgba(212,175,55,0.02) 1px,transparent 1px)", backgroundSize: "50px 50px", pointerEvents: "none" }} />
+      <div style={{ maxWidth: "900px", width: "100%", zIndex: 1 }}>
+        <div style={{ textAlign: "center", marginBottom: "40px" }}>
+          <div style={{ width: "80px", height: "80px", background: "linear-gradient(135deg,#1a1a0a,#2a2a10)", border: "1px solid #d4af3740", borderRadius: "20px", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "36px", margin: "0 auto 20px", boxShadow: "0 0 40px rgba(212,175,55,0.3)" }}>📈</div>
+          <div style={{ display: "inline-block", padding: "4px 14px", background: "#d4af3715", border: "1px solid #d4af3730", borderRadius: "50px", color: "#d4af37", fontSize: "10px", fontWeight: "700", letterSpacing: "3px", marginBottom: "14px" }}>FREE TRIAL ENDED</div>
+          <h1 style={{ color: "#fff", fontSize: "30px", fontWeight: "900", margin: "0 0 8px", letterSpacing: "2px" }}>BUSINESS GROWTH OS</h1>
+          <p style={{ color: "#ffffff40", fontSize: "14px", margin: 0, letterSpacing: "1px" }}>SELECT YOUR PLAN · BUILT BY SAIF KHAN</p>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(260px,1fr))", gap: "16px", marginBottom: "32px" }}>
+          {plans.map(plan => (
+            <div key={plan.id} onClick={() => setSelected(plan.id)} style={{ padding: "24px", background: selected === plan.id ? `${plan.color}10` : "#0f0f1e", border: `1px solid ${selected === plan.id ? plan.color + "50" : "#ffffff08"}`, borderRadius: "20px", cursor: "pointer", position: "relative", transition: "all .2s" }}>
+              {plan.badge && <div style={{ position: "absolute", top: -10, left: "50%", transform: "translateX(-50%)", background: `linear-gradient(135deg,${plan.color}cc,${plan.color})`, color: plan.id === "pro" ? "#000" : "#000", fontSize: "8px", fontWeight: "900", padding: "3px 12px", borderRadius: "50px", letterSpacing: "2px", whiteSpace: "nowrap" }}>{plan.badge}</div>}
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "16px" }}>
+                <div>
+                  <div style={{ color: plan.color, fontSize: "10px", fontWeight: "700", letterSpacing: "3px", marginBottom: "4px" }}>{plan.name.toUpperCase()}</div>
+                  <div style={{ color: "#fff", fontSize: "30px", fontWeight: "900", lineHeight: 1 }}>{plan.price}<span style={{ fontSize: "12px", fontWeight: "400", color: "#ffffff30" }}>{plan.period}</span></div>
+                </div>
+                <div style={{ width: "22px", height: "22px", borderRadius: "50%", border: `1px solid ${selected === plan.id ? plan.color : "#ffffff15"}`, display: "flex", alignItems: "center", justifyContent: "center", background: selected === plan.id ? plan.color : "transparent", flexShrink: 0 }}>
+                  {selected === plan.id && <span style={{ color: "#000", fontSize: "11px", fontWeight: "900" }}>✓</span>}
+                </div>
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: "7px" }}>
+                {plan.features.map(f => <div key={f} style={{ color: "#ffffff60", fontSize: "11px", lineHeight: 1.4 }}>{f}</div>)}
+              </div>
+            </div>
+          ))}
+        </div>
+        <div style={{ textAlign: "center", marginBottom: "24px" }}>
+          <button onClick={onUnlock} style={{ background: "linear-gradient(135deg,#b89620,#d4af37)", color: "#000", border: "none", padding: "18px 60px", borderRadius: "50px", fontSize: "15px", fontWeight: "900", cursor: "pointer", boxShadow: "0 8px 30px rgba(212,175,55,0.35)", letterSpacing: "2px" }}>
+            UNLOCK {plans.find(p => p.id === selected)?.name.toUpperCase()} — {plans.find(p => p.id === selected)?.price}/MO
+          </button>
+          <p style={{ color: "#ffffff20", fontSize: "11px", marginTop: "10px", letterSpacing: "1px" }}>CANCEL ANYTIME · INSTANT ACCESS · SECURE PAYMENT</p>
+        </div>
+        <div style={{ backgr
